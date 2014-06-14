@@ -960,6 +960,10 @@ void bpf_constructor(void);
 /** Constructor for Intels DPDK format module */
 void dpdk_constructor(void);
 #endif
+#if HAVE_ZMQ
+/** Constructor for the TraceMQ format module */
+void tracemq_constructor(void);
+#endif
 
 /** Extracts the RadioTap flags from a wireless link header
  *

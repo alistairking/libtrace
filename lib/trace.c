@@ -149,6 +149,9 @@ static void trace_init(void)
 #ifdef HAVE_DPDK
         dpdk_constructor();
 #endif
+#if HAVE_ZMQ
+	        tracemq_constructor();
+#endif
 	}
 }
 
