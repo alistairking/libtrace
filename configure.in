@@ -21,7 +21,7 @@ AC_CONFIG_SRCDIR(lib/trace.c)
 AM_INIT_AUTOMAKE([subdir-objects])
 
 # Make sure we use the relatively silent automake output
-m4_ifdef([AM_SILENT_RULES],[AM_SILENT_RULES([yes])])
+#m4_ifdef([AM_SILENT_RULES],[AM_SILENT_RULES([yes])])
 
 # Define our libtrace version number externally so we can use it in the source
 # as well, if needed.
@@ -391,6 +391,28 @@ if test "$want_dpdk" != no; then
 	fi
 fi
 
+AC_ARG_WITH([czmq],
+	AC_HELP_STRING([--with-zmq], [build with support for streaming traces via 0MQ]))
+
+AS_IF([test "x$with_zmq" != "xno"],
+	[
+	AC_CHECK_LIB(czmq, zctx_new, have_zmq=yes, have_zmq=no)
+	], [have_zmq=no])
+
+AS_IF([test "x$have_zmq" = "xyes"], [
+	if test "$ac_cv_lib_czmq_zctx_new" != "none required"; then
+		LIBTRACE_LIBS="$LIBTRACE_LIBS -lzmq -lczmq"
+	fi
+	with_zmq=yes
+	AC_DEFINE(HAVE_ZMQ, 1, "Compiled with 0MQ support")],
+	
+	[AS_IF([test "x$with_zmq" = "xyes"],
+		[AC_MSG_ERROR([0MQ requested but not found])])
+	AC_DEFINE(HAVE_ZMQ, 0, "Compiled with 0MQ support")
+	with_zmq=no]
+)
+
+
 # Checks for various "optional" libraries
 AC_CHECK_LIB(pthread, pthread_create, have_pthread=1, have_pthread=0)
 
@@ -610,6 +632,7 @@ AM_CONDITIONAL([HAVE_DAG], [test "$libtrace_dag" = true])
 AM_CONDITIONAL([HAVE_DPDK], [test "$libtrace_dpdk" = true])
 AM_CONDITIONAL([DAG2_4], [test "$libtrace_dag_version" = 24])
 AM_CONDITIONAL([DAG2_5], [test "$libtrace_dag_version" = 25])
+AM_CONDITIONAL([HAVE_ZMQ], [test "x$with_zmq" != "xno"])
 AM_CONDITIONAL([HAVE_NETPACKET_PACKET_H], [test "$libtrace_netpacket_packet_h" = true])
 AM_CONDITIONAL([HAVE_LIBGDC], [test "$ac_cv_header_gdc_h" = yes])
 AM_CONDITIONAL([HAVE_LLVM], [test "x$JIT" != "xno" ])
@@ -684,6 +707,8 @@ if test x"$libtrace_dag" = xtrue; then
 else
 	AC_MSG_NOTICE([Compiled with DAG live capture support: No])
 fi
+
+reportopt "Compiled with 0MQ support" $with_zmq
 
 if test x"$libtrace_dpdk" = xtrue; then
     AC_MSG_NOTICE([Compiled with DPDK live capture support: Yes])
