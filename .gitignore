@@ -17,11 +17,6 @@
 *.la
 *.a
 
-# helpful to me only?
-TAGS
-#makedocs
-#publish_docs.sh
-
 # Compiled programs
 docs/doxygen/
 docs/libtrace.doxygen
@@ -86,7 +81,6 @@ tools/tracesplit/tracesplit_dir
 tools/tracestats/tracestats
 tools/tracetop/tracetop
 ylwrap
-
 
 # Autotools files
 # http://www.gnu.org/software/automake
