@@ -357,97 +357,9 @@ enum base_format_t {
 	TRACE_FORMAT_LEGACY_NZIX  =14,	/**< Legacy format used for NZIX traces */
 	TRACE_FORMAT_LINUX_RING	  =15,	/**< Linux native interface capture PACKET_MMAP */
 	TRACE_FORMAT_RAWERF	  =16,	/**< Special format for reading uncompressed ERF traces without checking for compression */
-    TRACE_FORMAT_DPDK     =17, /**< The Intel Data Plane Development Kit format */
+	TRACE_FORMAT_DPDK     =17, /**< The Intel Data Plane Development Kit format */
+	TRACE_FORMAT_TRACEMQ      =18   /**< TraceMQ network protocol */
 };
-
-#if WITH_ZMQ
-/** TraceMQ protocol packet types */
-typedef enum {
-	TRACE_TRACEMQ_HELLO       =1, /**< Connection accepted */
-	TRACE_TRACEMQ_START	  =2, /**< Request for data transmission to begin
-				    */
-	TRACE_TRACEMQ_ACK	  =3, /**< Data acknowledgement */
-	TRACE_TRACEMQ_STATUS	  =4, /**< Fifo status packet */
-	TRACE_TRACEMQ_DUCK	  =5, /**< Dag duck info packet */
-	TRACE_TRACEMQ_END_DATA	  =6, /**< Server is exiting message */
-	TRACE_TRACEMQ_CLOSE	  =7, /**< Client is exiting message */
-	TRACE_TRACEMQ_DENY_CONN	  =8, /**< Connection has been denied */
-
-	TRACE_TRACEMQ_OPTION	  =11,/**< Option request */
-	TRACE_TRACEMQ_DUCK_2_4	  =13,/**< Dag 2.4 Duck */
-	TRACE_TRACEMQ_DUCK_2_5 	  =14,/**< Dag 2.5 Duck */
-	TRACE_TRACEMQ_LOSTCONN 	  =15,/**< Lost connection to server */
-	TRACE_TRACEMQ_SERVERSTART =16,/**< Reliable server has been restatracemqed */
-	TRACE_TRACEMQ_CLIENTDROP  =17,/**< Reliable client was lost */
-	TRACE_TRACEMQ_METADATA	  =18,/**< Packet contains server meta-data */
-
-	/** Not actually used - all DATA types begin from this value */
-	TRACE_TRACEMQ_DATA_SIMPLE =1000,
-
-	/** TRACEMQ is encapsulating an ERF capture record */
-	TRACE_TRACEMQ_DATA_ERF	  =TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_ERF,
-	/** TRACEMQ is encapsulating a WAG capture record */
-	TRACE_TRACEMQ_DATA_WAG	  =TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_WAG,
-	/** TRACEMQ is encapsulating a Legacy ATM capture record */
-	TRACE_TRACEMQ_DATA_LEGACY_ATM=TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_LEGACY_ATM,
-	/** TRACEMQ is encapsulating a Legacy POS capture record */
-	TRACE_TRACEMQ_DATA_LEGACY_POS=TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_LEGACY_POS,
-	/** TRACEMQ is encapsulating a Legacy ETH capture record */
-	TRACE_TRACEMQ_DATA_LEGACY_ETH=TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_LEGACY_ETH,
-	/** TRACEMQ is encapsulating a Linux native capture record */
-	TRACE_TRACEMQ_DATA_LINUX_NATIVE=TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_LINUX_NATIVE,
-	/** TRACEMQ is encapsulating a BSD native capture record */
-	//TRACE_TRACEMQ_DATA_BPF       =TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_BPF,
-	/** TRACEMQ is encapsulating a TSH capture record */
-	TRACE_TRACEMQ_DATA_TSH	  =TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_TSH,
-	/** TRACEMQ is encapsulating an ATM header capture record */
-	TRACE_TRACEMQ_DATA_ATMHDR = TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_ATMHDR,
-	/** TRACEMQ is encapsulating a Legacy NZIX capture record */
-	TRACE_TRACEMQ_DATA_LEGACY_NZIX=TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_LEGACY_NZIX,
-	/** TRACEMQ is encapsulating a Linux native PACKET_MMAP capture record */
-	TRACE_TRACEMQ_DATA_LINUX_RING=TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_LINUX_RING,
-	/** TRACEMQ is encapsulating a Intel DPDK capture record */
-	TRACE_TRACEMQ_DATA_DPDK=TRACE_TRACEMQ_DATA_SIMPLE+TRACE_FORMAT_DPDK,
-
-	/** As PCAP does not store the linktype with the packet, we need to
-	 * create a separate TRACEMQ type for each supported DLT, starting from
-	 * this value */
-	TRACE_TRACEMQ_DATA_DLT	  =2000,
-	/** TRACEMQ is encapsulating a PCAP capture record with a NULL linktype */
-	TRACE_TRACEMQ_DLT_NULL	  =TRACE_TRACEMQ_DATA_DLT+TRACE_DLT_NULL,
-	/** TRACEMQ is encapsulating a PCAP capture record with an Ethernet
-	 * linktype */
-	TRACE_TRACEMQ_DLT_EN10MB  =TRACE_TRACEMQ_DATA_DLT+TRACE_DLT_EN10MB,
-	/** TRACEMQ is encapsulating a PCAP capture record with an 802.11
-	 * linktype */
-	TRACE_TRACEMQ_DLT_IEEE802_11=TRACE_TRACEMQ_DATA_DLT+TRACE_DLT_IEEE802_11,
-	/** TRACEMQ is encapsulating a PCAP capture record with a Linux SLL
-	 * linktype */
-	TRACE_TRACEMQ_DLT_LINUX_SLL =TRACE_TRACEMQ_DATA_DLT+TRACE_DLT_LINUX_SLL,
-	/** TRACEMQ is encapsulating a PCAP capture record with a PFlog linktype */
-	TRACE_TRACEMQ_DLT_PFLOG	    =TRACE_TRACEMQ_DATA_DLT+TRACE_DLT_PFLOG,
-	/** TRACEMQ is encapsulating a PCAP capture record with an AAL5 linktype */
-	TRACE_TRACEMQ_DLT_ATM_RFC1483=TRACE_TRACEMQ_DATA_DLT+TRACE_DLT_ATM_RFC1483,
-	/** Unused value marking the end of the valid range for PCAP TRACEMQ
-	 * encapsulation */
-	TRACE_TRACEMQ_DATA_DLT_END=2999,
-	/** BPF does not store the linktype with the packet, so we need a
-	 * separate TRACEMQ type for each supported DLT. This value represents the
-	 * starting point */
-	TRACE_TRACEMQ_DATA_BPF	  = 3000,
-
-	TRACE_TRACEMQ_BPF_NULL	  = TRACE_TRACEMQ_DATA_BPF+TRACE_DLT_NULL,
-	TRACE_TRACEMQ_BPF_EN10MB  = TRACE_TRACEMQ_DATA_BPF+TRACE_DLT_EN10MB,
-	TRACE_TRACEMQ_BPF_IEEE802_11=TRACE_TRACEMQ_DATA_BPF+TRACE_DLT_IEEE802_11,
-	TRACE_TRACEMQ_BPF_PFLOG	  =TRACE_TRACEMQ_DATA_BPF+TRACE_DLT_PFLOG,
-	TRACE_TRACEMQ_BPF_ATM_RFC1483=TRACE_TRACEMQ_DATA_BPF+TRACE_DLT_ATM_RFC1483,
-
-	TRACE_TRACEMQ_DATA_BPF_END= 3999,
-	/** Unused value marking the end of the valid range for all TRACEMQ packet
-	 * types */
-	TRACE_TRACEMQ_LAST	  = 4000
-} libtrace_tracemq_types_t;
-#endif
 
 /** RT protocol packet types */
 typedef enum {

@@ -1,5 +1,5 @@
 lib_LTLIBRARIES = libtrace.la
-include_HEADERS = libtrace.h dagformat.h lt_inttypes.h daglegacy.h rt_protocol.h erftypes.h  
+include_HEADERS = libtrace.h dagformat.h lt_inttypes.h daglegacy.h rt_protocol.h erftypes.h tracemq_protocol.h
 
 AM_CFLAGS=@LIBCFLAGS@ @CFLAG_VISIBILITY@
 AM_CXXFLAGS=@LIBCXXFLAGS@ @CFLAG_VISIBILITY@

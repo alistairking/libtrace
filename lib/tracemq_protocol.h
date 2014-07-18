@@ -50,7 +50,7 @@
 /** Maximum size for the RT header */
 /*#define TRACEMQ_MAX_HDR_SIZE 256*/
 /** Maximum sequence number for the RT protocol */
-/*#define TRACEMQ_MAX_SEQUENCE 2147483647*/
+#define TRACEMQ_MAX_SEQUENCE 2147483647
 
 /* Procedure for adding new RT control types
  * -------------------------------------------
@@ -79,7 +79,7 @@
 /** TraceMQ packet header (frame prepended to all TraceMQ messages) */
 typedef struct tracemq_header {
 	/** The type of TRACEMQ packet */
-	libtrace_tracemq_types_t type;
+	libtrace_rt_types_t type;
 	/** The sequence number of the packet */
 	uint32_t sequence;
 } tracemq_header_t;
