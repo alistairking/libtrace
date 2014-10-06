@@ -12,8 +12,6 @@ endif
 EXTRA_DIST=libtrace.sln libtrace.vcproj test-convert.vcproj \
 		   test-format.vcproj test-pcap-bpf.vcproj
 
-.PHONY: docs
-
 bootstrap-clean:
 	$(RM) -f Makefile.in aclocal.m4 compile config.* \
 		configure depcomp install-sh ltmain.sh missing \
