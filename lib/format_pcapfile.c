@@ -161,7 +161,7 @@ static inline uint16_t swaps(libtrace_t *libtrace, uint16_t num)
 	/* To deal with open_dead traces that might try and use this
 	 * if we don't have any per trace data, assume host byte order
 	 */
-	if (!DATA(libtrace))
+	if (!DATA(libtrace) || DATA(libtrace)->started == false)
 		return num;
 	
 	/* We can use the PCAP magic number to determine the byte order */
@@ -176,7 +176,7 @@ static inline uint32_t swapl(libtrace_t *libtrace, uint32_t num)
 	/* To deal with open_dead traces that might try and use this
 	 * if we don't have any per trace data, assume host byte order
 	 */
-	if (!DATA(libtrace))
+	if (!DATA(libtrace) || DATA(libtrace)->started == false)
 		return num;
 	
 	/* We can use the PCAP magic number to determine the byte order */
