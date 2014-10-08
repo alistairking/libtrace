@@ -58,24 +58,8 @@
 
 #define TRACEMQ_INFO ((struct tracemq_format_data_t*)libtrace->format_data)
 
-/* Convert the TraceMQ denial code into a nice printable and coherent string */
-static const char *tracemq_deny_reason(enum tracemq_conn_denied_t reason) 
-{
-	const char *string = 0;
-
-	switch(reason) {
-		case TRACEMQ_DENY_FULL:
-			string = "Max connections reached on server";
-			break;
-		case TRACEMQ_DENY_AUTH:
-			string = "Authentication failed";
-			break;
-		default:
-			string = "Unknown reason";
-	}
-
-	return string;
-}
+/** @todo make configurable */
+#define RX_RECORD_BUFFER 20000000
 
 struct tracemq_format_data_t {
 	/* TraceMQ URI of the host to connect to */
@@ -90,6 +74,8 @@ struct tracemq_format_data_t {
 	/* ZMQ message for the packet currently being recieved (without the
 	   tracemq header frame) */
 	zmsg_t *msg;
+	/* ZMQ frame for the packet buffer last received */
+	zframe_t *buffer_frame;
 
 	/* Dummy traces that can be assigned to the received packets to ensure
 	 * that the appropriate functions can be used to process them */
@@ -102,142 +88,35 @@ struct tracemq_format_data_t {
 	libtrace_t *dummy_bpf;
 };
 
-/* Sends an TraceMQ ACK to the server to acknowledge receipt of packets */
-/** TODO remove the need to send ACKs */
-static int tracemq_send_ack(libtrace_t *libtrace, uint32_t seqno)  {
-	zframe_t *frame;
-        tracemq_header_t ack_msg;
-
-	ack_msg.type     = TRACE_RT_ACK;
-	ack_msg.sequence = seqno;
-
-	if(((frame =zframe_new (&ack_msg, sizeof(tracemq_header_t))) == NULL) ||
-	   (zframe_send (&frame, TRACEMQ_INFO->socket, 0) == -1)) {
-		printf("Failed to send ack to server");
-		return -1;
-	}
-
-	return 0;
-}
-
 /* Connects to a TraceMQ server 
  *
  * Returns -1 if an error occurs
  */
 static int tracemq_connect(libtrace_t *libtrace) {
-	zmsg_t *msg;
-
-	zframe_t *frame;
-	tracemq_header_t tx_hdr;
-
-	zframe_t *rx_hdr_frame;
-	tracemq_header_t *rx_hdr;
-
-	uint8_t reason;
-
-	int rc = -1;
-
 	assert(TRACEMQ_INFO->context != NULL);
 	assert(TRACEMQ_INFO->uri != NULL);
 
         if ((TRACEMQ_INFO->socket =
-	     zsocket_new(TRACEMQ_INFO->context, ZMQ_REQ)) == NULL) {
+	     zsocket_new(TRACEMQ_INFO->context, ZMQ_SUB)) == NULL) {
                 trace_set_err(libtrace, TRACE_ERR_INIT_FAILED,
 			      "Could not create ZMQ socket");
 		return -1;
         }
 
-	if (zsocket_connect(TRACEMQ_INFO->socket, "%s", TRACEMQ_INFO->uri) == -1) {
+	zsocket_set_rcvhwm(TRACEMQ_INFO->socket, RX_RECORD_BUFFER);
+
+	if (zsocket_connect(TRACEMQ_INFO->socket,
+			    "%s", TRACEMQ_INFO->uri) == -1) {
                 trace_set_err(libtrace, TRACE_ERR_INIT_FAILED,
 			      "Could not connect to %s",
 			      TRACEMQ_INFO->uri);
 		return -1;
         }
 
-	/* We are connected, now send start message to server */
-	tx_hdr.type = TRACE_RT_START;
-	tx_hdr.sequence = 0;
-	if((frame =
-	    zframe_new (&tx_hdr, sizeof(tracemq_header_t))) == NULL) {
-		trace_set_err(libtrace, TRACE_ERR_INIT_FAILED,
-			      "Could not allocate message frame");
-		return -1;
-	}
+	/* subscribe to all messages */
+	zsocket_set_subscribe(TRACEMQ_INFO->socket, "");
 
-	if(zframe_send (&frame, TRACEMQ_INFO->socket, 0) == -1) {
-		trace_set_err(libtrace, TRACE_ERR_INIT_FAILED,
-			      "Could not send start message to TraceMQ server");
-		goto err;
-	}
-	/* frame is destroyed after send, safe to reassign or ignore */
-
-	/* now we expect to get a hello message back from the server */
-	/* or possibly a denied message */
-
-	/** TODO - change to polling so that we can handle timeouts gracefully */
-
-	if((msg = zmsg_recv (TRACEMQ_INFO->socket)) == NULL) {
-		/* interrupted */
-		goto err;
-	}
-
-	/* a message from the server will always begin with:
-	 *  tracemq_header_t
-	 *
-	 * Then, based on the type, there may be much much more
-	 */
-	if((rx_hdr_frame = zmsg_pop(msg)) == NULL) {
-		goto err;
-	}
-
-	rx_hdr = (tracemq_header_t*)zframe_data(rx_hdr_frame);
-
-	switch (rx_hdr->type) {
-		case TRACE_RT_DENY_CONN:
-			/* Connection was denied */
-
-			/* next frame is the reason */
-			if((frame = zmsg_pop(msg)) == NULL) {
-				goto err;
-			}
-			reason = ((tracemq_deny_conn_t*)zframe_data(frame))->reason;
-
-			zframe_destroy(&frame);
-
-			trace_set_err(libtrace, TRACE_ERR_INIT_FAILED,
-				"Connection attempt is denied: %s",
-				tracemq_deny_reason(reason));
-			rc = -1;
-			break;
-
-		case TRACE_RT_HELLO:
-			/* no hello header atm */
-
-			tracemq_send_ack(libtrace, rx_hdr->sequence);
-
-			rc = 0;
-			break;
-
-		default:
-			trace_set_err(libtrace, TRACE_ERR_INIT_FAILED,
-					"Unknown message type received: %d",
-					rx_hdr->type);
-			rc = -1;
-			break;
-	}
-
-	if(rx_hdr_frame != NULL) {
-		zframe_destroy(&frame);
-	}
-	if(msg != NULL) {
-		zmsg_destroy(&msg);
-	}
-	return rc;
-
- err:
-	trace_set_err(libtrace, TRACE_ERR_INIT_FAILED,
-		      "TraceMQ Handshake failed");
-	return -1;
+	return 0;
 }
 
 static void tracemq_init_format_data(libtrace_t *libtrace) {
@@ -254,6 +133,7 @@ static void tracemq_init_format_data(libtrace_t *libtrace) {
 	TRACEMQ_INFO->context = NULL;
 	TRACEMQ_INFO->socket = NULL;
 	TRACEMQ_INFO->msg = NULL;
+	TRACEMQ_INFO->buffer_frame = NULL;
 }
 
 static int tracemq_init_input(libtrace_t *libtrace) {
@@ -279,8 +159,7 @@ static int tracemq_init_input(libtrace_t *libtrace) {
 }
 
 static int tracemq_start_input(libtrace_t *libtrace) {
-
-	/* handles sending a hello to the server, and getting back the response */
+	/* subscribe to the flood */
 	if (tracemq_connect(libtrace) == -1)
 		return -1;
 
@@ -291,16 +170,8 @@ static int tracemq_start_input(libtrace_t *libtrace) {
 }
 
 static int tracemq_pause_input(libtrace_t *libtrace) {
-	zframe_t *frame;
-        tracemq_header_t close_msg;
-
-	close_msg.type = TRACE_RT_CLOSE;
-
-	/* Send a close message to the server */
-	if(((frame = zframe_new (&close_msg, sizeof(tracemq_header_t))) == NULL) ||
-	   (zframe_send (&frame, TRACEMQ_INFO->socket, 0) == -1)) {
-		printf("Failed to send close message to server");
-	}
+	zmsg_destroy(&TRACEMQ_INFO->msg);
+	zframe_destroy(&TRACEMQ_INFO->buffer_frame);
 
 	/* close the socket */
 	zsocket_destroy(TRACEMQ_INFO->context, TRACEMQ_INFO->socket);
@@ -311,8 +182,13 @@ static int tracemq_pause_input(libtrace_t *libtrace) {
 }
 
 static int tracemq_fin_input(libtrace_t *libtrace) {
-	/* Make sure we clean up any dummy traces that we have been using */
+	zmsg_destroy(&TRACEMQ_INFO->msg);
+	zframe_destroy(&TRACEMQ_INFO->buffer_frame);
 
+	free(TRACEMQ_INFO->uri);
+	TRACEMQ_INFO->uri = NULL;
+
+	/* Make sure we clean up any dummy traces that we have been using */
 	if (TRACEMQ_INFO->dummy_duck)
 		trace_destroy_dead(TRACEMQ_INFO->dummy_duck);
 
@@ -334,103 +210,11 @@ static int tracemq_fin_input(libtrace_t *libtrace) {
         return 0;
 }
 
-/** AK HAX out, revisit this */
-#if 0
-/* I've upped this to 10K to deal with jumbo-grams that have not been snapped
- * in any way. This means we have a much larger memory overhead per packet
- * (which won't be used in the vast majority of cases), so we may want to think
- * about doing something smarter, e.g. allocate a smaller block of memory and
- * only increase it as required.
- *
- * XXX Capturing off int: can still lead to packets that are larger than 10K,
- * in instances where the fragmentation is done magically by the NIC. This
- * is pretty nasty, but also very rare.
- */
-#define RT_BUF_SIZE (LIBTRACE_PACKET_BUFSIZE * 2)
-
-/* Receives data from an RT server */
-static int rt_read(libtrace_t *libtrace, void **buffer, size_t len, int block)
-{
-        int numbytes;
-
-	assert(len <= RT_BUF_SIZE);
-
-	if (!RT_INFO->pkt_buffer) {
-		RT_INFO->pkt_buffer = (char*)malloc((size_t)RT_BUF_SIZE);
-		RT_INFO->buf_current = RT_INFO->pkt_buffer;
-		RT_INFO->buf_filled = 0;
-	}
-
-#ifndef MSG_DONTWAIT
-#define MSG_DONTWAIT 0
-#endif
-
-	if (block)
-		block=0;
-	else
-		block=MSG_DONTWAIT;
-
-	/* If we don't have enough buffer space for the amount we want to
-	 * read, move the current buffer contents to the front of the buffer
-	 * to make room */
-	if (len > RT_INFO->buf_filled) {
-		memcpy(RT_INFO->pkt_buffer, RT_INFO->buf_current,
-				RT_INFO->buf_filled);
-		RT_INFO->buf_current = RT_INFO->pkt_buffer;
-#ifndef MSG_NOSIGNAL
-#  define MSG_NOSIGNAL 0
-#endif
-		/* Loop as long as we don't have all the data that we were
-		 * asked for */
-		while (len > RT_INFO->buf_filled) {
-                	if ((numbytes = recv(RT_INFO->input_fd,
-                                                RT_INFO->buf_current +
-						RT_INFO->buf_filled,
-                                                RT_BUF_SIZE-RT_INFO->buf_filled,
-                                                MSG_NOSIGNAL|block)) <= 0) {
-				if (numbytes == 0) {
-					trace_set_err(libtrace, TRACE_ERR_RT_FAILURE,
-							"No data received");
-					return -1;
-				}
-
-                	        if (errno == EINTR) {
-                	                /* ignore EINTR in case
-                	                 * a caller is using signals
-					 */
-                	                continue;
-                	        }
-				if (errno == EAGAIN) {
-					/* We asked for non-blocking mode, so
-					 * we need to return now */
-					trace_set_err(libtrace,
-							EAGAIN,
-							"EAGAIN");
-					return -1;
-				}
-
-                        	perror("recv");
-				trace_set_err(libtrace, errno,
-						"Failed to read data into rt recv buffer");
-                        	return -1;
-                	}
-			RT_INFO->buf_filled+=numbytes;
-		}
-
-        }
-	*buffer = RT_INFO->buf_current;
-	RT_INFO->buf_current += len;
-	RT_INFO->buf_filled -= len;
-        return len;
-}
-#endif
-
 
 /* Sets the trace format for the packet to match the format it was originally
  * captured in, rather than the TraceMQ format */
-static int tracemq_set_format(libtrace_t *libtrace, libtrace_packet_t *packet) 
+static int tracemq_set_format(libtrace_t *libtrace, libtrace_packet_t *packet)
 {
-
 	/* We need to assign the packet to a "dead" trace */
 
 	/* Try to minimize the number of corrupt packets that slip through
@@ -438,7 +222,8 @@ static int tracemq_set_format(libtrace_t *libtrace, libtrace_packet_t *packet)
 	if (packet->type > TRACE_RT_DATA_DLT &&
 	    packet->type < TRACE_RT_DATA_DLT_END) {
 		if (!TRACEMQ_INFO->dummy_pcap) {
-			TRACEMQ_INFO->dummy_pcap = trace_create_dead("pcapfile:-");
+			TRACEMQ_INFO->dummy_pcap =
+				trace_create_dead("pcapfile:-");
 		}
 		packet->trace = TRACEMQ_INFO->dummy_pcap;
 		return 0;
@@ -525,6 +310,7 @@ static int tracemq_set_format(libtrace_t *libtrace, libtrace_packet_t *packet)
 	return 0; /* success */
 }
 
+#if 0
 /* Shouldn't need to call this too often */
 static int tracemq_prepare_packet(libtrace_t *libtrace,
 				  libtrace_packet_t *packet,
@@ -554,13 +340,13 @@ static int tracemq_prepare_packet(libtrace_t *libtrace,
 
 	return 0;
 }
+#endif
 
 /* Reads the body of a TraceMQ packet from the network */
 static int tracemq_read_data_packet(libtrace_t *libtrace,
 				    libtrace_packet_t *packet) {
 	zframe_t *frame = NULL;
-	size_t framing_len = 0;
-	size_t payload_len = 0;
+	size_t buffer_len = 0;
 
 	uint32_t prep_flags = 0;
 	prep_flags |= TRACE_PREP_DO_NOT_OWN_BUFFER;
@@ -571,81 +357,9 @@ static int tracemq_read_data_packet(libtrace_t *libtrace,
 		return -1;
 	}
 
-	framing_len = zframe_size(frame);
-
-#if DEBUG
-	fprintf(stderr, "Unpacking packet with %d bytes of framing\n",
-	       framing_len);
-#endif
-
-	/* ensure the buffer is big enough */
-	if(packet->buffer != NULL) {
-		packet->buffer = realloc(packet->buffer, framing_len);
-	} else {
-		packet->buffer = malloc(framing_len);
-	}
-	if(packet->buffer == NULL) {
-		return -1;
-	}
-
-	/* for now, do a memcpy */
-	/** TODO - figure out to this more efficiently */
-	memcpy(packet->buffer, zframe_data(frame), framing_len);
-
-	/* free the frame */
-	zframe_destroy(&frame);
-
-	/* wdcap would have sent one frame with framing, one with payload, check
-	   if we have another frame */
-	if((frame = zmsg_pop(TRACEMQ_INFO->msg)) != NULL) {
-		payload_len = zframe_size(frame);
-
-#if DEBUG
-		fprintf(stderr, "\t... and %d bytes of payload\n",
-			payload_len);
-#endif
-
-		/* ensure the buffer is big enough */
-		if(packet->buffer != NULL) {
-			packet->buffer = realloc(packet->buffer,
-						 framing_len+payload_len);
-		} else {
-			packet->buffer = malloc(framing_len+payload_len);
-		}
-		if(packet->buffer == NULL) {
-			return -1;
-		}
-
-		/* for now, do a memcpy */
-		/** TODO - figure out to this more efficiently */
-		memcpy(packet->buffer+framing_len,
-		       zframe_data(frame), payload_len);
-
-
-		zframe_destroy(&frame);
-
-#if DEBUG
-		int i;
-		for (i = 0; i < (framing_len+payload_len); i++) {
-			fprintf(stderr, "%02X ",((uint8_t*)(packet->buffer))[i]);
-			if((i+1) % 8 == 0)
-				fprintf(stderr, "\n");
-			if(i == (framing_len-1))
-				fprintf(stderr, "\n");
-		}
-		fprintf(stderr, "\n");
-#endif
-	}
-
-#if DEBUG
-	fprintf(stderr, "sending ack\n");
-#endif
-
-	/* Always send an ACK */
-	if (tracemq_send_ack(libtrace,
-			     TRACEMQ_INFO->tracemq_hdr.sequence) == -1) {
-		return -1;
-	}
+	TRACEMQ_INFO->buffer_frame = frame;
+	packet->buffer = zframe_data(frame);
+	buffer_len = zframe_size(frame);
 
 	/* Convert to the original capture format */
 	if (tracemq_set_format(libtrace, packet) < 0) {
@@ -661,12 +375,10 @@ static int tracemq_read_data_packet(libtrace_t *libtrace,
 		return -1;
 	}
 
-#if DEBUG
-	fprintf(stderr, "done (%"PRIu16")\n", trace_get_source_port(packet));
-#endif
-
-	return framing_len + payload_len;
+	return buffer_len;
 }
+
+static uint64_t packets_rx = 0;
 
 /* Reads a TraceMQ packet from the network.
  * It reads a new message from ZMQ, decodes the tracemq_header, and then
@@ -680,7 +392,19 @@ static int tracemq_read_packet_versatile(libtrace_t *libtrace,
 
 	libtrace_rt_types_t switch_type;
 
-	/* not sure what this does */
+#if 0
+	zmq_pollitem_t pollitems[] = {
+		{ TRACEMQ_INFO->socket, 0, ZMQ_POLLIN, 0 },
+	};
+	int rc = 0;
+#endif
+
+	if (zctx_interrupted) {
+		return 0;
+	}
+
+	/* indicate that the packet buffer is not owned by the packet
+	   ( it is owned by the frame that we will free later ) */
 	if (packet->buf_control == TRACE_CTRL_PACKET) {
 		packet->buf_control = TRACE_CTRL_EXTERNAL;
 		free(packet->buffer);
@@ -691,6 +415,26 @@ static int tracemq_read_packet_versatile(libtrace_t *libtrace,
 	if(TRACEMQ_INFO->msg != NULL) {
 		zmsg_destroy(&TRACEMQ_INFO->msg);
 	}
+
+	/* free the last buffer frame if any */
+	if(TRACEMQ_INFO->buffer_frame != NULL) {
+		zframe_destroy(&TRACEMQ_INFO->buffer_frame);
+	}
+
+#if 0
+	/* poll for incoming packets until interrupted */
+	while(rc == 0 && !zctx_interrupted) {
+		rc = zmq_poll(pollitems, 1, 1 * ZMQ_POLL_MSEC);
+	}
+	if(zctx_interrupted || rc < 0) {
+		fprintf(stderr, "DONE: received %"PRIu64" packets\n",
+			packets_rx);
+		return 0;
+	}
+	assert(pollitems[0].revents & ZMQ_POLLIN);
+#endif
+	/** @todo figure out why polling slows things down so much */
+	/** @todo try not using czmq msg (or czmq at all) to remove overhead */
 
 	/* read the next message from ZMQ */
 	if((TRACEMQ_INFO->msg = zmsg_recv (TRACEMQ_INFO->socket)) == NULL) {
@@ -712,6 +456,15 @@ static int tracemq_read_packet_versatile(libtrace_t *libtrace,
 	TRACEMQ_INFO->tracemq_hdr.sequence = hdr->sequence;
 
 	packet->type = hdr->type;
+
+	zframe_destroy(&frame);
+
+	packets_rx++;
+	if (packets_rx % 1000000 == 0) {
+		fprintf(stderr,
+			"received %"PRIu64" packets, current seq no is %"PRIu32"\n",
+			packets_rx, TRACEMQ_INFO->tracemq_hdr.sequence);
+	}
 
 	/* All data-bearing packets (as opposed to internal messages)
 	 * should be treated the same way when it comes to reading the rest
@@ -736,16 +489,13 @@ static int tracemq_read_packet_versatile(libtrace_t *libtrace,
 		case TRACE_RT_CLIENTDROP:
 		case TRACE_RT_SERVERSTART:
 			/* All these have no payload */
-			break;
 		case TRACE_RT_PAUSE_ACK:
 			/* XXX: Add support for this */
-			break;
 		case TRACE_RT_OPTION:
 			/* XXX: Add support for this */
-			break;
 		default:
 			printf("Bad rt type for client receipt: %d\n",
-					switch_type);
+			       switch_type);
 			return -1;
 	}
 
@@ -818,12 +568,6 @@ static libtrace_linktype_t tracemq_get_link_type(
 	return TRACE_TYPE_NONDATA;
 }
 
-#if 0
-static int rt_get_fd(const libtrace_t *trace) {
-        return ((struct rt_format_data_t *)trace->format_data)->input_fd;
-}
-#endif
-
 static void tracemq_help(void) {
         printf("TraceMQ format module\n");
         printf("Supported input URIs:\n");
@@ -852,7 +596,11 @@ static struct libtrace_format_t tracemq = {
         tracemq_fin_input,             	/* fin_input */
         NULL,                           /* fin_output */
         tracemq_read_packet,           	/* read_packet */
+#if 0
 	tracemq_prepare_packet,		/* prepare_packet */
+#else
+	NULL,
+#endif
 	NULL,				/* fin_packet */
         NULL,                           /* write_packet */
         tracemq_get_link_type,	        /* get_link_type */
