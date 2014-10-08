@@ -158,6 +158,7 @@ static void run_trace(char *uri)
 	if (trace_is_err(trace))
 		trace_perror(trace,"Processing trace");
 
+        trace_destroy_packet(packet);
         trace_destroy(trace);
 }
 
