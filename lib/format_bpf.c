@@ -401,10 +401,9 @@ static int bpf_prepare_packet(libtrace_t *libtrace UNUSED,
 	 *
 	 * Let's try to standardise our header a bit, hopefully without
 	 * overwriting anything else important */
-
-	if (sizeof(struct BPF_TIMEVAL) != sizeof(struct lt_bpf_timeval)) { 	
-		
-		ptr = ((struct local_bpf_hdr *)(packet->header));
+        if (((flags & TRACE_PREP_DO_NOT_FIX_AGAIN) == 0) &&
+            (sizeof(struct BPF_TIMEVAL) != sizeof(struct lt_bpf_timeval))) {
+                ptr = ((struct local_bpf_hdr *)(packet->header));
 		replace = ((struct libtrace_bpf_hdr *)(packet->header));
 		orig = *ptr;
 
@@ -413,8 +412,6 @@ static int bpf_prepare_packet(libtrace_t *libtrace UNUSED,
 		replace->bh_caplen = orig.bh_caplen;
 		replace->bh_datalen = orig.bh_datalen;
 		replace->bh_hdrlen = orig.bh_hdrlen;
-
-
 	}
 
 	/* Find the payload */

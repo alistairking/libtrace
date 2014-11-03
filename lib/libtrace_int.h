@@ -275,7 +275,13 @@ enum {
 	
 	/** The buffer memory is externally-owned and must not be freed by 
 	 * libtrace when the packet is destroyed. */
-	TRACE_PREP_DO_NOT_OWN_BUFFER	=0
+	TRACE_PREP_DO_NOT_OWN_BUFFER	=0,
+
+        /** The buffer has been already read by libtrace (i.e. it has been
+            transmitted over tracemq (or rt?)). Thus any hax should not be
+            re-applied. This stops the BPF code from re-haxing the timeval in
+            the header and wrecking the packet */
+        TRACE_PREP_DO_NOT_FIX_AGAIN     =2,
 };
 
 

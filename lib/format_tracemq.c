@@ -351,6 +351,7 @@ static int tracemq_read_data_packet(libtrace_t *libtrace,
 
 	uint32_t prep_flags = 0;
 	prep_flags |= TRACE_PREP_DO_NOT_OWN_BUFFER;
+        prep_flags |= TRACE_PREP_DO_NOT_FIX_AGAIN;
 
 	/* if this is called, we already have read the message, we just
 	   need to pop the next frame */
@@ -371,7 +372,7 @@ static int tracemq_read_data_packet(libtrace_t *libtrace,
 	/* Update payload pointers and packet type to match the original
 	 * format */
 	if (trace_prepare_packet(packet->trace, packet, packet->buffer,
-				 packet->type, 0)) {
+				 packet->type, prep_flags)) {
 		fprintf(stderr, "could not prepare packet\n");
 		return -1;
 	}
