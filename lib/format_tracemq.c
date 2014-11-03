@@ -71,11 +71,10 @@ struct tracemq_format_data_t {
 
 	/* Header for the packet currently being received */
 	tracemq_header_t tracemq_hdr;
-	/* ZMQ message for the packet currently being recieved (without the
-	   tracemq header frame) */
-	zmsg_t *msg;
-	/* ZMQ frame for the packet buffer last received */
-	zframe_t *buffer_frame;
+
+	/* ZMQ msg for the packet buffer last received */
+        zmq_msg_t msgbuf;
+        int msgbuf_init;
 
 	/* Dummy traces that can be assigned to the received packets to ensure
 	 * that the appropriate functions can be used to process them */
@@ -132,8 +131,7 @@ static void tracemq_init_format_data(libtrace_t *libtrace) {
 	TRACEMQ_INFO->uri = NULL;
 	TRACEMQ_INFO->context = NULL;
 	TRACEMQ_INFO->socket = NULL;
-	TRACEMQ_INFO->msg = NULL;
-	TRACEMQ_INFO->buffer_frame = NULL;
+        TRACEMQ_INFO->msgbuf_init = 0;
 }
 
 static int tracemq_init_input(libtrace_t *libtrace) {
@@ -170,8 +168,10 @@ static int tracemq_start_input(libtrace_t *libtrace) {
 }
 
 static int tracemq_pause_input(libtrace_t *libtrace) {
-	zmsg_destroy(&TRACEMQ_INFO->msg);
-	zframe_destroy(&TRACEMQ_INFO->buffer_frame);
+        if(TRACEMQ_INFO->msgbuf_init != 0) {
+                zmq_msg_close(&TRACEMQ_INFO->msgbuf);
+                TRACEMQ_INFO->msgbuf_init = 0;
+        }
 
 	/* close the socket */
 	zsocket_destroy(TRACEMQ_INFO->context, TRACEMQ_INFO->socket);
@@ -182,8 +182,10 @@ static int tracemq_pause_input(libtrace_t *libtrace) {
 }
 
 static int tracemq_fin_input(libtrace_t *libtrace) {
-	zmsg_destroy(&TRACEMQ_INFO->msg);
-	zframe_destroy(&TRACEMQ_INFO->buffer_frame);
+        if(TRACEMQ_INFO->msgbuf_init != 0) {
+                zmq_msg_close(&TRACEMQ_INFO->msgbuf);
+                TRACEMQ_INFO->msgbuf_init = 0;
+        }
 
 	free(TRACEMQ_INFO->uri);
 	TRACEMQ_INFO->uri = NULL;
@@ -345,7 +347,6 @@ static int tracemq_prepare_packet(libtrace_t *libtrace,
 /* Reads the body of a TraceMQ packet from the network */
 static int tracemq_read_data_packet(libtrace_t *libtrace,
 				    libtrace_packet_t *packet) {
-	zframe_t *frame = NULL;
 	size_t buffer_len = 0;
 
 	uint32_t prep_flags = 0;
@@ -353,13 +354,13 @@ static int tracemq_read_data_packet(libtrace_t *libtrace,
 
 	/* if this is called, we already have read the message, we just
 	   need to pop the next frame */
-	if((frame = zmsg_pop(TRACEMQ_INFO->msg)) == NULL) {
-		return -1;
-	}
 
-	TRACEMQ_INFO->buffer_frame = frame;
-	packet->buffer = zframe_data(frame);
-	buffer_len = zframe_size(frame);
+        if(zmq_msg_recv(&TRACEMQ_INFO->msgbuf, TRACEMQ_INFO->socket, 0) < 0) {
+                return -1;
+        }
+
+	packet->buffer = zmq_msg_data(&TRACEMQ_INFO->msgbuf);
+	buffer_len = zmq_msg_size(&TRACEMQ_INFO->msgbuf);
 
 	/* Convert to the original capture format */
 	if (tracemq_set_format(libtrace, packet) < 0) {
@@ -378,7 +379,9 @@ static int tracemq_read_data_packet(libtrace_t *libtrace,
 	return buffer_len;
 }
 
+#ifdef DEBUG
 static uint64_t packets_rx = 0;
+#endif
 
 /* Reads a TraceMQ packet from the network.
  * It reads a new message from ZMQ, decodes the tracemq_header, and then
@@ -387,17 +390,8 @@ static uint64_t packets_rx = 0;
 static int tracemq_read_packet_versatile(libtrace_t *libtrace,
 					 libtrace_packet_t *packet) {
 	size_t br = 0;
-	zframe_t *frame = NULL;
-	tracemq_header_t *hdr = NULL;
 
 	libtrace_rt_types_t switch_type;
-
-#if 0
-	zmq_pollitem_t pollitems[] = {
-		{ TRACEMQ_INFO->socket, 0, ZMQ_POLLIN, 0 },
-	};
-	int rc = 0;
-#endif
 
 	if (zctx_interrupted) {
 		return 0;
@@ -411,60 +405,45 @@ static int tracemq_read_packet_versatile(libtrace_t *libtrace,
 		packet->buffer = NULL;
 	}
 
-	/* free the last message if any */
-	if(TRACEMQ_INFO->msg != NULL) {
-		zmsg_destroy(&TRACEMQ_INFO->msg);
-	}
-
 	/* free the last buffer frame if any */
-	if(TRACEMQ_INFO->buffer_frame != NULL) {
-		zframe_destroy(&TRACEMQ_INFO->buffer_frame);
+	if(TRACEMQ_INFO->msgbuf_init != 0) {
+		zmq_msg_close(&TRACEMQ_INFO->msgbuf);
 	}
+        /* get ready to read payload */
+        if(zmq_msg_init(&TRACEMQ_INFO->msgbuf) != 0) {
+                return -1;
+        }
+        TRACEMQ_INFO->msgbuf_init = 1;
 
-#if 0
-	/* poll for incoming packets until interrupted */
-	while(rc == 0 && !zctx_interrupted) {
-		rc = zmq_poll(pollitems, 1, 1 * ZMQ_POLL_MSEC);
-	}
-	if(zctx_interrupted || rc < 0) {
-		fprintf(stderr, "DONE: received %"PRIu64" packets\n",
-			packets_rx);
-		return 0;
-	}
-	assert(pollitems[0].revents & ZMQ_POLLIN);
-#endif
-	/** @todo figure out why polling slows things down so much */
 	/** @todo try not using czmq msg (or czmq at all) to remove overhead */
 
 	/* read the next message from ZMQ */
-	if((TRACEMQ_INFO->msg = zmsg_recv (TRACEMQ_INFO->socket)) == NULL) {
-		/* interrupted */
-		return 0;
-	}
+        if(zmq_recv(TRACEMQ_INFO->socket,
+                    &(TRACEMQ_INFO->tracemq_hdr), sizeof(tracemq_header_t), 0)
+           != sizeof(tracemq_header_t)) {
+                /* interrupted, probably */
+                /** @todo check errno */
+                if (zctx_interrupted) {
+                        return 0;
+                }
+                return -1;
+          }
 
-	/* a message from the server will always begin with:
-	 *  tracemq_header_t
-	 *
-	 * Then, based on the type, there may be much much more
-	 */
-	if((frame = zmsg_pop(TRACEMQ_INFO->msg)) == NULL) {
-		return -1;
-	}
+        if(zsocket_rcvmore(TRACEMQ_INFO->socket) == 0) {
+                /* missing payload */
+                return -1;
+        }
 
-	hdr = (tracemq_header_t*)zframe_data(frame);
-	TRACEMQ_INFO->tracemq_hdr.type = hdr->type;
-	TRACEMQ_INFO->tracemq_hdr.sequence = hdr->sequence;
+	packet->type = TRACEMQ_INFO->tracemq_hdr.type;
 
-	packet->type = hdr->type;
-
-	zframe_destroy(&frame);
-
+#ifdef DEBUG
 	packets_rx++;
 	if (packets_rx % 1000000 == 0) {
 		fprintf(stderr,
 			"received %"PRIu64" packets, current seq no is %"PRIu32"\n",
 			packets_rx, TRACEMQ_INFO->tracemq_hdr.sequence);
 	}
+#endif
 
 	/* All data-bearing packets (as opposed to internal messages)
 	 * should be treated the same way when it comes to reading the rest
